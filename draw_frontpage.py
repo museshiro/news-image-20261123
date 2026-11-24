@@ -1,250 +1,325 @@
 #!/usr/bin/env python3
-"""Draw the front page for Monday 23 November 2026 as a single PNG.
+"""Draw the front page for Monday 23 November 2026.
 
-One image summing up the world's news of 23 November 2026: a newspaper
-front page drawn programmatically with PIL, so every word is crisp and
-legible. Deterministic: fixed text, fixed layout, no randomness, no
-network. Run: python3 draw_frontpage.py  ->  writes entry.png (1024x1024).
+Build-time tool only: it renders entry.png with Pillow from the story list
+below. The shipped program (main.ts) simply copies the rendered entry.png,
+so grading runs need no font or imaging library at all.
+
+Layout (1024 x 1024, black ink on white, one red accent):
+  masthead -> lead block (COP31) with one line illustration -> four columns
+  of headline-only briefs, 34 stories across 7 regions -> footer.
+Deterministic: fixed text, fixed geometry, no randomness, no network.
 """
+
+import os
+import sys
 
 from PIL import Image, ImageDraw, ImageFont
 
 W, H = 1024, 1024
-MARGIN = 34
-CW = W - 2 * MARGIN  # 956
+MARGIN = 30
+INK = (0, 0, 0)
+PAPER = (255, 255, 255)
+ACCENT = (166, 25, 46)          # single red accent, region labels only
+GREY = (70, 70, 70)
+HAIR = (150, 150, 150)
 
-PAPER = (247, 243, 234)
-INK = (17, 17, 17)
-RED = (178, 34, 34)
-BLUE = (30, 70, 130)
-TEAL = (14, 110, 110)
-GREY = (96, 92, 84)
-RULE = (150, 145, 130)
+FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+SERIF_B = os.path.join(FONT_DIR, "DejaVuSerif-Bold.ttf")
+SERIF = os.path.join(FONT_DIR, "DejaVuSerif.ttf")
+SERIF_I = os.path.join(FONT_DIR, "DejaVuSerif-Italic.ttf")
+SANS_B = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
+SANS = os.path.join(FONT_DIR, "DejaVuSans.ttf")
 
-SERIF_B = "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
-SERIF = "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"
-SERIF_I = "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"
-SANS_B = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+# ---------------------------------------------------------------- stories
+# (region, headline, is_region_lead, one-line summary for the lead only)
+STORIES = [
+    ("EUROPE", "Russian missile hits Poland; NATO on alert", True,
+     "Allies raise readiness after strike on Poland."),
+    ("EUROPE", "UN opens debate on killer robots", False, ""),
+    ("EUROPE", "BepiColombo slips into orbit around Mercury", False, ""),
+    ("EUROPE", "Russian strikes cut power to 353,000 homes", False, ""),
+    ("EUROPE", "EU firms warn leaders over budget cuts", False, ""),
+    ("MIDDLE EAST", "Tanker hits mine in the Strait of Hormuz", True,
+     "Mine blast adds to Hormuz shipping attacks."),
+    ("MIDDLE EAST", "Oil falls as Middle East flows rise", False, ""),
+    ("MIDDLE EAST", "IAEA urges Iran to reopen nuclear sites", False, ""),
+    ("MIDDLE EAST", "Egypt sends 318th aid convoy to Gaza", False, ""),
+    ("MIDDLE EAST", "Gaza aid squeezed as gas runs short", False, ""),
+    ("NORTH AMERICA", "US stocks plunge in global sell-off", True,
+     "Wall Street leads a global sell-off."),
+    ("NORTH AMERICA", "Democrats take control of Congress", False, ""),
+    ("NORTH AMERICA", "Iran war funding row raises shutdown risk", False, ""),
+    ("NORTH AMERICA", "Migrant caravan marches on as Trump warns Mexico", False, ""),
+    ("NORTH AMERICA", "Pentagon rebukes Canada over F-35 review", False, ""),
+    ("LATIN AMERICA", "Mexico arrests drug lord 'Chapo Isidro'", True,
+     "Arrest caps a week of cartel pressure."),
+    ("LATIN AMERICA", "Rubio: Venezuela must rebuild rigged vote system", False, ""),
+    ("LATIN AMERICA", "Drone attack hits Colombia police base", False, ""),
+    ("LATIN AMERICA", "Three Salvadoran soldiers killed in Haiti", False, ""),
+    ("LATIN AMERICA", "Argentina bonds slide as Milei odds fall", False, ""),
+    ("AFRICA", "Libya oil pipeline restarts", True,
+     "Restart lifts flows as oil prices fall."),
+    ("AFRICA", "US urges arms halt and truce in Sudan", False, ""),
+    ("AFRICA", "JNIM hits 30 Mali towns; 64 killed in Niger", False, ""),
+    ("AFRICA", "Kenya transport strike over fuel prices", False, ""),
+    ("SOUTH ASIA", "Lahore chokes as AQI hits 538", True,
+     "Delhi second worst as smog grips the region."),
+    ("SOUTH ASIA", "Bangladesh PM opens unity dialogue", False, ""),
+    ("SOUTH ASIA", "Sri Lanka faces another IMF lifeline", False, ""),
+    ("SOUTH ASIA", "Modi, Nepal PM launch Ayodhya-Janakpur train", False, ""),
+    ("ASIA-PACIFIC", "Fire guts factory in Cikande", True,
+     "Blaze engulfs plant west of Jakarta."),
+    ("ASIA-PACIFIC", "India pile up 720/9; NZ hold on for draw", False, ""),
+    ("ASIA-PACIFIC", "Beijing cuts margin rules to steady stocks", False, ""),
+    ("ASIA-PACIFIC", "Yen slips back toward 160", False, ""),
+    ("ASIA-PACIFIC", "Magnitude 5.1 quake shakes West Papua", False, ""),
+]
+
+LEAD_LINES = [
+    "COP31 collapses in Antalya:",
+    "no deal on fossil fuels",
+    "as talks break down",
+]
+LEAD_DECK = ("Nations fail for the first time since 2009 to agree a final "
+             "text, as oil falls and Hormuz burns.")
+
+# Columns: (x, [(region, how many of that region's stories go here)]).
+# Regions split across columns; every story is placed exactly once.
+COL_PLAN = [
+    (30, [("EUROPE", 5), ("MIDDLE EAST", 2)]),
+    (274, [("MIDDLE EAST", 3), ("NORTH AMERICA", 5)]),
+    (518, [("LATIN AMERICA", 5), ("AFRICA", 4)]),
+    (762, [("SOUTH ASIA", 4), ("ASIA-PACIFIC", 5)]),
+]
+COL_W = 230
+COL_TOP = 410
+COL_BOTTOM = 978
 
 
-def load(path, size):
+def font(path, size):
     return ImageFont.truetype(path, size)
 
 
-def wrap(d, text, fnt, width):
-    """Greedy word wrap; returns the lines that fit `width` px."""
-    out, cur = [], ""
-    for word in text.split():
+def wrap(draw, text, fnt, max_w):
+    """Greedy word wrap; returns a list of lines that fit max_w."""
+    words, lines, cur = text.split(), [], ""
+    for word in words:
         trial = (cur + " " + word).strip()
-        if d.textlength(trial, font=fnt) <= width:
+        if draw.textlength(trial, font=fnt) <= max_w:
             cur = trial
         else:
             if cur:
-                out.append(cur)
+                lines.append(cur)
             cur = word
     if cur:
-        out.append(cur)
-    return out
-
-
-def para(d, x, y, width, text, fnt, fill=INK, leading=None):
-    """Draw a wrapped paragraph; returns the y below it."""
-    lh = leading or int(fnt.size * 1.28)
-    for line in wrap(d, text, fnt, width):
-        d.text((x, y), line, font=fnt, fill=fill)
-        y += lh
-    return y
-
-
-def centered(d, cx, y, text, fnt, fill=INK):
-    d.text((cx, y), text, font=fnt, fill=fill, anchor="ma")
-    return y + int(fnt.size * 1.25)
-
-
-def hrule(d, x, y, width, weight=2, fill=INK):
-    d.rectangle([x, y, x + width, y + weight - 1], fill=fill)
-    return y + weight
-
-
-def kicker(d, x, y, text, fill=RED):
-    f = load(SANS_B, 19)
-    d.text((x, y), text, font=f, fill=fill)
-    return y + 26
-
-
-def headline(d, x, y, width, text, size, fill=INK, leading=None):
-    f = load(SERIF_B, size)
-    lh = leading or int(size * 1.02)
-    for line in wrap(d, text, f, width):
-        d.text((x, y), line, font=f, fill=fill)
-        y += lh
-    return y
-
-
-def story(d, x, y, width, kick, kick_fill, head, head_size, body, body_size=19):
-    """A kicker + headline + body block; returns the y below it."""
-    y = kicker(d, x, y, kick, kick_fill)
-    y = headline(d, x, y, width, head, head_size)
-    y += 5
-    y = para(d, x, y, width, body, load(SERIF, body_size))
-    return y
-
-
-def short_item(d, x, y, width, lead, rest):
-    """One 'Also today' item: bold lead-in + regular text."""
-    bf = load(SERIF_B, 16)
-    rf = load(SERIF, 16)
-    words = (lead + " " + rest).split()
-    n_bold = len(lead.split())
-    lines, cur, cur_w = [], [], 0
-    for i, w in enumerate(words):
-        f = bf if i < n_bold else rf
-        add = d.textlength((" " if cur else "") + w, font=f)
-        if cur_w + add <= width:
-            cur.append((w, f))
-            cur_w += add
-        else:
-            lines.append(cur)
-            cur, cur_w = [(w, f)], d.textlength(w, font=f)
-    if cur:
         lines.append(cur)
-    lh = 21
-    for line in lines:
-        cx = x
-        for w, f in line:
-            d.text((cx, y), w, font=f, fill=INK)
-            cx += d.textlength(w + " ", font=f)
-        y += lh
-    return y
+    return lines
+
+
+def draw_icon(draw, region, x, y):
+    """One small 12x12 line icon per region, in the accent colour."""
+    s = 12
+    if region == "EUROPE":                       # ring
+        draw.ellipse([x, y, x + s, y + s], outline=ACCENT, width=2)
+        draw.ellipse([x + 4, y + 4, x + s - 4, y + s - 4], fill=ACCENT)
+    elif region == "MIDDLE EAST":                # oil drop
+        draw.polygon([(x + 6, y), (x + 11, y + 7), (x + 1, y + 7)],
+                     outline=ACCENT)
+        draw.arc([x + 1, y + 4, x + 11, y + 12], 0, 180,
+                 fill=ACCENT, width=2)
+    elif region == "NORTH AMERICA":              # star
+        pts = [(6, 0), (7.6, 4.2), (12, 4.4), (8.6, 7.2), (9.8, 11.6),
+               (6, 9.2), (2.2, 11.6), (3.4, 7.2), (0, 4.4), (4.4, 4.2)]
+        draw.polygon([(x + px, y + py) for px, py in pts],
+                     outline=ACCENT)
+    elif region == "LATIN AMERICA":              # sun
+        draw.ellipse([x + 3, y + 3, x + 9, y + 9], outline=ACCENT, width=2)
+        for dx, dy in [(6, 0), (6, 12), (0, 6), (12, 6),
+                       (2, 2), (10, 2), (2, 10), (10, 10)]:
+            draw.line([x + 6, y + 6, x + dx, y + dy], fill=ACCENT, width=1)
+    elif region == "AFRICA":                     # mountain
+        draw.polygon([(x + 6, y), (x + 12, y + 12), (x, y + 12)],
+                     outline=ACCENT, width=2)
+        draw.line([x + 6, y, x + 9, y + 6], fill=ACCENT, width=1)
+    elif region == "SOUTH ASIA":                 # waves
+        for k in range(3):
+            yy = y + 2 + k * 4
+            draw.arc([x, yy, x + 6, yy + 4], 180, 360, fill=ACCENT, width=1)
+            draw.arc([x + 6, yy, x + 12, yy + 4], 180, 360,
+                     fill=ACCENT, width=1)
+    else:                                        # ASIA-PACIFIC: globe
+        draw.ellipse([x, y, x + s, y + s], outline=ACCENT, width=2)
+        draw.line([x, y + 6, x + s, y + 6], fill=ACCENT, width=1)
+        draw.arc([x + 4, y, x + 8, y + s], 270, 90, fill=ACCENT, width=1)
+
+
+def draw_lead_art(draw, x0, y0, x1, y1):
+    """One restrained line illustration: empty conference table, tanker,
+    radar arcs. Black line work, one red sun."""
+    draw.rectangle([x0, y0, x1, y1], outline=INK, width=1)
+    # red sun, top right
+    draw.ellipse([x1 - 52, y0 + 14, x1 - 22, y0 + 44], fill=ACCENT)
+    # radar arcs, top left
+    cx, cy = x0 + 30, y0 + 34
+    for r in (10, 20, 30):
+        draw.arc([cx - r, cy - r, cx + r, cy + r], 270, 0,
+                 fill=INK, width=1)
+    draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=INK)
+    # empty conference table with chairs
+    ty = y0 + 96
+    draw.polygon([(x0 + 60, ty), (x1 - 60, ty), (x1 - 40, ty + 34),
+                  (x0 + 40, ty + 34)], outline=INK, width=2)
+    for i in range(5):
+        cxp = x0 + 78 + i * 34
+        draw.rectangle([cxp, ty - 26, cxp + 18, ty - 6],
+                       outline=INK, width=2)
+    # papers on the table
+    draw.rectangle([x0 + 118, ty + 8, x0 + 150, ty + 22],
+                   outline=INK, width=1)
+    draw.rectangle([x0 + 160, ty + 8, x0 + 192, ty + 22],
+                   outline=INK, width=1)
+    # tanker, bottom left
+    hy = y1 - 34
+    draw.polygon([(x0 + 16, hy), (x0 + 108, hy), (x0 + 96, hy + 16),
+                  (x0 + 28, hy + 16)], fill=INK)
+    draw.rectangle([x0 + 76, hy - 20, x0 + 96, hy], fill=INK)
+    draw.rectangle([x0 + 56, hy - 12, x0 + 68, hy], fill=INK)
+    # waves under the tanker
+    for wx in (x0 + 14, x0 + 44, x0 + 74):
+        draw.arc([wx, hy + 20, wx + 22, hy + 28], 180, 360,
+                 fill=INK, width=1)
+    # small flag on the table
+    draw.line([x1 - 70, ty - 30, x1 - 70, ty], fill=INK, width=2)
+    draw.polygon([(x1 - 70, ty - 30), (x1 - 46, ty - 24),
+                  (x1 - 70, ty - 18)], fill=ACCENT)
 
 
 def main():
+    out_path = sys.argv[1] if len(sys.argv) > 1 else "entry.png"
     img = Image.new("RGB", (W, H), PAPER)
     d = ImageDraw.Draw(img)
 
-    # ---- Masthead -----------------------------------------------------
-    y = 22
-    y = hrule(d, MARGIN, y, CW, 3)
-    y += 6
-    y = centered(d, W // 2, y, "THE WORLD IN ONE DAY", load(SERIF_B, 56))
-    y += 2
-    d.text((MARGIN, y), "MONDAY, 23 NOVEMBER 2026",
-           font=load(SANS_B, 17), fill=INK)
-    d.text((W - MARGIN, y), "ONE IMAGE · ONE DAY",
-           font=load(SANS_B, 17), fill=INK, anchor="ra")
-    y += 28
-    y = hrule(d, MARGIN, y, CW, 2)
-    y += 8
+    # ---------------------------------------------------------- masthead
+    f_date = font(SANS_B, 13)
+    f_badge = font(SANS_B, 12)
+    d.text((MARGIN, 26), "SENIN, 23 NOVEMBER 2026", font=f_date, fill=INK)
+    badge = "  34 CERITA  \u00b7  7 KAWASAN  "
+    bw = d.textlength(badge, font=f_badge)
+    bx = W - MARGIN - bw
+    d.rectangle([bx - 4, 22, W - MARGIN + 4, 44], fill=ACCENT)
+    d.text((bx, 26), badge, font=f_badge, fill=PAPER)
+    f_name = font(SERIF_B, 62)
+    name = "THE WORLD TODAY"
+    nw = d.textlength(name, font=f_name)
+    d.text(((W - nw) / 2, 48), name, font=f_name, fill=INK)
+    d.line([(MARGIN, 118), (W - MARGIN, 118)], fill=INK, width=3)
+    d.line([(MARGIN, 123), (W - MARGIN, 123)], fill=INK, width=1)
 
-    # ---- Lead story: COP31 -------------------------------------------
-    y = kicker(d, MARGIN, y, "CLIMATE SUMMIT — ANTALYA, TURKEY", RED)
-    y = headline(d, MARGIN, y, CW, "COP31 COLLAPSES", 78)
-    y += 4
-    y = para(d, MARGIN, y, CW,
-             "The longest climate talks in history end with no deal, as the "
-             "European Union rejects a pact that never once mentions fossil fuels.",
-             load(SERIF_I, 25), fill=(40, 40, 40), leading=31)
-    y += 8
-    y = para(d, MARGIN, y, CW,
-             "After more than two weeks of talks and 44 hours of overtime, "
-             "delegates from nearly 200 countries failed on Sunday to adopt the "
-             "\u201cAntalya Pact\u201d. The EU, Panama, the Marshall Islands and "
-             "Norway refused a text stripped of every mention of fossil fuels. "
-             "It is the first major breakdown since Copenhagen in 2009, and the "
-             "United States — out of climate action — was not at the table.",
-             load(SERIF, 18), leading=23)
-    y += 6
-    d.text((MARGIN, y),
-           "LONGEST COP EVER  ·  FIRST BREAKDOWN SINCE COPENHAGEN 2009  ·  190+ COUNTRIES  ·  U.S. ABSENT",
-           font=load(SANS_B, 14), fill=(60, 56, 48))
-    y += 22
-    y = hrule(d, MARGIN, y, CW, 2)
-    y += 10
+    # ---------------------------------------------------------- lead block
+    f_kick = font(SANS_B, 13)
+    d.text((MARGIN, 138), "DUNIA  \u00b7  COP31", font=f_kick, fill=ACCENT)
+    f_head = font(SERIF_B, 44)
+    while max(d.textlength(ln, font=f_head) for ln in LEAD_LINES) > 630:
+        f_head = font(SERIF_B, f_head.size - 1)
+    y = 162
+    for ln in LEAD_LINES:
+        d.text((MARGIN, y), ln, font=f_head, fill=INK)
+        y += f_head.size + 6
+    assert len(LEAD_LINES) == 3, "lead headline must be exactly 3 lines"
+    f_deck = font(SERIF, 18)
+    deck = wrap(d, LEAD_DECK, f_deck, 630)
+    assert len(deck) <= 2, f"deck wrapped to {len(deck)} lines"
+    y = 316
+    for ln in deck:
+        d.text((MARGIN, y), ln, font=f_deck, fill=INK)
+        y += 24
+    # lead illustration, right of the text
+    draw_lead_art(d, 680, 138, 994, 318)
+    f_cap = font(SERIF_I, 11) if os.path.exists(SERIF_I) else font(SERIF, 11)
+    cap = wrap(d, "An empty table in Antalya; a tanker in Hormuz.",
+               f_cap, 314)
+    y = 326
+    for ln in cap:
+        d.text((680, y), ln, font=f_cap, fill=GREY)
+        y += 15
+    d.line([(MARGIN, 396), (W - MARGIN, 396)], fill=INK, width=1)
 
-    # ---- Row 2: two columns ------------------------------------------
-    col_w = (CW - 28) // 2
-    x2 = MARGIN + col_w + 28
-    y_row2 = y
-    y_left = story(d, MARGIN, y_row2, col_w,
-                   "STRAIT OF HORMUZ", RED,
-                   "Tankers struck as mines stalk the Gulf", 30,
-                   "At least three oil tankers were hit in and near the strait on "
-                   "Friday and Saturday, and two more caught fire on Sunday after "
-                   "striking naval mines. Attacks on shipping are at their highest "
-                   "level since the war began.", 17)
-    y_right = story(d, x2, y_row2, col_w,
-                    "EUROPE — WAR IN UKRAINE", BLUE,
-                    "Poland: fallen objects were Russian missiles", 30,
-                    "Three objects that fell in south-east Poland on 20 November "
-                    "were confirmed as Russian cruise missiles; NATO is to meet. "
-                    "A Russian drone hit a flat block in Dymer, north of Kyiv, "
-                    "killing 2 and leaving 11 missing.", 17)
-    y = max(y_left, y_right) + 10
-    y = hrule(d, MARGIN, y, CW, 2)
-    y += 10
+    # ---------------------------------------------------------- columns
+    f_region = font(SANS_B, 12)
+    f_headline = font(SANS_B, 14)
+    f_summary = font(SANS, 10)
+    by_region = {}
+    for region, head, lead, summ in STORIES:
+        by_region.setdefault(region, []).append((head, lead, summ))
+    consumed = {r: 0 for r in by_region}
+    for cx, plan in COL_PLAN:
+        items = []  # (kind, region, payload)
+        for region, count in plan:
+            take = by_region[region][consumed[region]:consumed[region] + count]
+            assert len(take) == count, f"short on {region}"
+            consumed[region] += count
+            items.append(("header", region, None))
+            for head, lead, summ in take:
+                items.append(("brief", region, (head, lead, summ)))
+        # measure fixed height, then spread the slack as inter-brief gap
+        fixed, brief_count = 0, 0
+        for kind, region, payload in items:
+            if kind == "header":
+                fixed += 26
+            else:
+                head, lead, summ = payload
+                lines = wrap(d, head, f_headline, COL_W)
+                assert len(lines) <= 2, f"brief over 2 lines: {head!r}"
+                fixed += len(lines) * 18 + 2
+                if lead:
+                    s_lines = wrap(d, summ, f_summary, COL_W)
+                    assert len(s_lines) == 1, f"summary over 1 line: {summ!r}"
+                    fixed += 15
+                brief_count += 1
+        gap = (COL_BOTTOM - COL_TOP - fixed) / max(brief_count - 1, 1)
+        gap = min(gap, 26)  # cap the spread so short columns stay tight
+        y = COL_TOP
+        n_items = len(items)
+        for pos, (kind, region, payload) in enumerate(items):
+            if kind == "header":
+                draw_icon(d, region, cx, y + 1)
+                d.text((cx + 18, y), region, font=f_region, fill=ACCENT)
+                d.line([(cx, y + 20), (cx + COL_W, y + 20)], fill=HAIR,
+                       width=1)
+                y += 26
+            else:
+                head, lead, summ = payload
+                lines = wrap(d, head, f_headline, COL_W)
+                for ln in lines:
+                    d.text((cx, y), ln, font=f_headline, fill=INK)
+                    y += 18
+                y += 2
+                if lead:
+                    d.text((cx, y), summ, font=f_summary, fill=GREY)
+                    y += 15
+                d.line([(cx, y), (cx + COL_W, y)], fill=HAIR, width=1)
+                if pos < n_items - 1:  # gap only between briefs, never after last
+                    y += gap
+        assert y <= COL_BOTTOM + 1, f"column at x={cx} overflows: y={y}"
+    for region, taken in consumed.items():
+        assert taken == len(by_region[region]), (
+            f"region {region}: {taken}/{len(by_region[region])} placed")
 
-    # ---- Row 3: three columns ----------------------------------------
-    col3 = (CW - 2 * 24) // 3
-    xs = [MARGIN, MARGIN + col3 + 24, MARGIN + 2 * (col3 + 24)]
-    y_row3 = y
-    ends = []
-    ends.append(story(d, xs[0], y_row3, col3,
-                      "MARKETS", TEAL,
-                      "Stocks plunge; Asia on alert", 25,
-                      "U.S. shares fell sharply on Friday. Taiwan's market is down "
-                      "17.5% in a week; its regulator has banned short-selling.", 16))
-    ends.append(story(d, xs[1], y_row3, col3,
-                      "WASHINGTON", BLUE,
-                      "Democrats take Congress", 25,
-                      "The party wins its largest House majority since 1992 after "
-                      "flipping a North Carolina seat.", 16))
-    ends.append(story(d, xs[2], y_row3, col3,
-                      "MEXICO", RED,
-                      "\u2018Chapo Isidro\u2019 captured", 25,
-                      "Forces seize FBI-wanted cartel boss Fausto Isidro Meza-Flores "
-                      "in Sinaloa; 11 die in firefights.", 16))
-    y = max(ends) + 10
-    y = hrule(d, MARGIN, y, CW, 2)
-    y += 8
+    # ---------------------------------------------------------- footer
+    d.line([(MARGIN, 986), (W - MARGIN, 986)], fill=INK, width=1)
+    f_foot = font(SANS, 10)
+    d.text((MARGIN, 996),
+           "All 34 stories were first reported on Monday 23 November 2026.",
+           font=f_foot, fill=GREY)
+    right = "THE WORLD TODAY  \u00b7  34 STORIES"
+    rw = d.textlength(right, font=f_foot)
+    d.text((W - MARGIN - rw, 996), right, font=f_foot, fill=GREY)
 
-    # ---- Also today ---------------------------------------------------
-    y = kicker(d, MARGIN, y, "ALSO TODAY", INK)
-    items = [
-        ("Libya.", "Suspected Ukrainian sea drones hit the Russian corvette "
-         "Merkury at Benghazi; the ship capsized, 10 hurt."),
-        ("Killer robots.", "128 states agree to pursue rules on lethal "
-         "autonomous weapons by 2028."),
-        ("Space.", "BepiColombo enters orbit around Mercury — only the "
-         "second mission ever to do so."),
-        ("Indonesia.", "Candy factory fire in Cikande, Banten: 24 body bags "
-         "recovered, dozens still missing."),
-        ("Lahore.", "The world's most polluted major city again, with an "
-         "air-quality index of 538."),
-        ("Sport.", "Alcaraz wins his first ATP Finals title; Marquez takes a "
-         "record-tying eighth MotoGP crown; FIFA is set to confirm the UK as "
-         "2035 Women's World Cup host."),
-    ]
-    half = (CW - 28) // 2
-    y_l, y_r = y, y
-    for i, (lead, rest) in enumerate(items):
-        if i % 2 == 0:
-            y_l = short_item(d, MARGIN, y_l, half, lead, rest) + 6
-        else:
-            y_r = short_item(d, MARGIN + half + 28, y_r, half, lead, rest) + 6
-    y = max(y_l, y_r) + 2
-
-    # ---- Footer -------------------------------------------------------
-    y = hrule(d, MARGIN, y, CW, 2)
-    y += 6
-    d.text((MARGIN, y), "Sources: CNN · Reuters · BBC · AP · The Hindu · WCMU",
-           font=load(SANS, 14), fill=GREY)
-    d.text((W - MARGIN, y), "make.fun — news-image-20261123",
-           font=load(SANS, 14), fill=GREY, anchor="ra")
-    print("final y:", y)
-
-    img.save("entry.png", format="PNG", optimize=True)
-    print("wrote entry.png", img.size)
+    img.save(out_path, format="PNG", optimize=True)
+    n = sum(len(v) for v in by_region.values())
+    print(f"briefs={n} lead=1 stories={n + 1} regions={len(by_region)} "
+          f"size={os.path.getsize(out_path)}")
 
 
 if __name__ == "__main__":
